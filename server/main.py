@@ -230,7 +230,7 @@ async def health():
         }
     }
 
-@app.post("/api/optimize", response_model=SEOptimizeResponse)
+@app.post("/api/optimize", response_model=SEOOptimizeResponse)
 async def optimize_seo(request: SEOOptimizeRequest, http_request: Request):
     """
     Optimizes a product title with AI-suggested keywords.

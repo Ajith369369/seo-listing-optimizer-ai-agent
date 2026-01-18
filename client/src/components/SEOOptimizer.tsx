@@ -3,12 +3,12 @@
  * Main component for the SEO Listing Optimizer AI Agent
  * Implements HITL pattern with discriminated union state management
  */
-import { useState, useCallback } from 'react';
-import { SEOState, ReviewRequiredState, ErrorState } from '../types/seo';
+import { useCallback, useState } from 'react';
 import { optimizeTitle } from '../services/api';
+import { ErrorState, SEOState } from '../types/seo';
+import { generateUUID } from '../utils/uuid';
 import { KeywordChip } from './KeywordChip';
 import { LoadingSpinner, TitleSkeleton } from './LoadingSpinner';
-import { generateUUID } from '../utils/uuid';
 
 const INITIAL_STATE: SEOState = {
   id: generateUUID(),
@@ -64,9 +64,9 @@ export function SEOOptimizer() {
       } else if (errorMessage === 'RATE_LIMIT') {
         errorType = 'rate_limit';
         message = 'The Agent is busy analyzing other listings. Please wait 60 seconds.';
-      } else if (errorMessage.startsWith('NETWORK_ERROR')) {
+      } else if (errorMessage === 'BACKEND_UNREACHABLE' || errorMessage.startsWith('NETWORK_ERROR')) {
         errorType = 'network_error';
-        message = 'Network error. Please check your connection and try again.';
+        message = 'Backend not reachable. Start the server: in the server folder run "uvicorn main:app --reload"';
       } else if (errorMessage.startsWith('API_ERROR')) {
         errorType = 'api_error';
         message = errorMessage.replace('API_ERROR: ', '');
@@ -117,6 +117,9 @@ export function SEOOptimizer() {
           } else if (errorMessage === 'RATE_LIMIT') {
             errorType = 'rate_limit';
             message = 'The Agent is busy analyzing other listings. Please wait 60 seconds.';
+          } else if (errorMessage === 'BACKEND_UNREACHABLE' || errorMessage.startsWith('NETWORK_ERROR')) {
+            errorType = 'network_error';
+            message = 'Backend not reachable. Start the server: in the server folder run "uvicorn main:app --reload"';
           }
 
           setState({

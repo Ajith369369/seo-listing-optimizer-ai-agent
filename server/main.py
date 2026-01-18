@@ -45,13 +45,15 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# CORS Middleware
+# CORS Middleware - must run early to add headers to preflight (OPTIONS) and all responses
+# allow_origins=["*"] works when allow_credentials=False; for prod use an explicit allowlist
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
-    allow_credentials=True,
+    allow_origins=["*"],  # Permissive for dev; restrict to specific origins in production
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Request Models

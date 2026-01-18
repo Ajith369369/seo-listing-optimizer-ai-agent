@@ -4,7 +4,8 @@
  */
 import axios, { AxiosError } from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000';
+// Empty = use Vite proxy in dev (/api -> :8000), no CORS. Set VITE_API_URL for production.
+const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 const REQUEST_TIMEOUT = 10000; // 10 seconds
 
 export interface SEOOptimizeRequest {
@@ -33,9 +34,9 @@ const apiClient = axios.create({
  */
 export async function optimizeTitle(
   title: string
-): Promise<SEOptimizeResponse> {
+): Promise<SEOOptimizeResponse> {
   try {
-    const response = await apiClient.post<SEOptimizeResponse>(
+    const response = await apiClient.post<SEOOptimizeResponse>(
       '/api/optimize',
       { title } as SEOOptimizeRequest
     );
@@ -53,13 +54,15 @@ export async function optimizeTitle(
       if (axiosError.response?.status === 429) {
         throw new Error('RATE_LIMIT');
       }
-      
+      // 502 = proxy could not reach backend (server not running)
+      if (axiosError.response?.status === 502) {
+        throw new Error('BACKEND_UNREACHABLE');
+      }
       // Handle other API errors
       if (axiosError.response?.status) {
         throw new Error(`API_ERROR: ${axiosError.response.data?.detail || axiosError.message}`);
       }
-      
-      // Handle network errors
+      // No response (connection refused, backend down)
       if (error.request) {
         throw new Error('NETWORK_ERROR');
       }

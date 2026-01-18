@@ -19,7 +19,7 @@ from utils.rate_limiter import RateLimiter
 class Settings(BaseSettings):
     requests_per_minute: int = 15
     requests_per_day: int = 500
-    api_key: str = ""  # Gemini API key from .env
+    api_key: str = ""  # Gemini API key from .env (API_KEY=...)
     request_timeout: int = 10  # seconds
     
     class Config:
@@ -137,12 +137,8 @@ async def optimize_with_gemini(title: str, retries: int = 3) -> SEOOptimizeRespo
     Implements Self-Healing AI with retry logic and exponential backoff.
     Handles 429 rate limit errors gracefully.
     """
-    # Use gemini-1.5-flash for free tier (or gemini-2.0-flash-exp if available)
-    try:
-        model = genai.GenerativeModel('gemini-1.5-flash')
-    except Exception:
-        # Fallback to 2.0 if 1.5 is not available
-        model = genai.GenerativeModel('gemini-2.0-flash-exp')
+    # gemini-1.5-flash is retired (404); use gemini-2.0-flash (fallback: gemini-2.0-flash-001)
+    model = genai.GenerativeModel("gemini-2.0-flash")
     
     prompt = f"{SEO_SYSTEM_PROMPT}\n\nInput Title: {title}\n\nProvide your optimization:"
     

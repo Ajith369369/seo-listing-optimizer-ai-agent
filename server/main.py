@@ -19,7 +19,7 @@ from utils.rate_limiter import RateLimiter
 class Settings(BaseSettings):
     requests_per_minute: int = 15
     requests_per_day: int = 500
-    gemini_api_key: str = ""
+    api_key: str = ""  # Gemini API key from .env
     request_timeout: int = 10  # seconds
     
     class Config:
@@ -29,8 +29,8 @@ class Settings(BaseSettings):
 settings = Settings()
 
 # Initialize Gemini
-if settings.gemini_api_key:
-    genai.configure(api_key=settings.gemini_api_key)
+if settings.api_key:
+    genai.configure(api_key=settings.api_key)
 
 # Rate Limiter
 rate_limiter = RateLimiter(

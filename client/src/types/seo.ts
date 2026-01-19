@@ -27,6 +27,7 @@ export interface ReviewRequiredState extends BaseSEOState {
   keywords: string[];
   reasoning: string;
   editableTitle: string; // User can edit before approving
+  provider?: string; // e.g. 'gemini' | 'gemma' from multi-provider LLM gateway
 }
 
 // Error state - something went wrong

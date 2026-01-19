@@ -52,6 +52,7 @@ export function SEOOptimizer() {
         keywords: result.keywords,
         reasoning: result.reasoning,
         editableTitle: result.optimizedTitle,
+        provider: result.metadata?.provider,
       });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
@@ -104,6 +105,7 @@ export function SEOOptimizer() {
             keywords: result.keywords,
             reasoning: result.reasoning,
             editableTitle: result.optimizedTitle,
+            provider: result.metadata?.provider,
           });
         })
         .catch((error) => {
@@ -346,6 +348,9 @@ export function SEOOptimizer() {
               <div className="p-4 bg-blue-50 rounded-lg border border-blue-200">
                 <h3 className="text-sm font-medium text-blue-900 mb-2">AI Reasoning</h3>
                 <p className="text-sm text-blue-800">{state.reasoning}</p>
+                {state.provider && (
+                  <p className="text-xs text-gray-500 mt-2">Powered by {state.provider}</p>
+                )}
               </div>
 
               {/* Action Buttons */}

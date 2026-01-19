@@ -20,6 +20,7 @@ export interface SEOOptimizeResponse {
   keywords: string[];
   optimizedTitle: string;
   reasoning: string;
+  metadata?: { provider?: string };
 }
 
 const apiClient = axios.create({

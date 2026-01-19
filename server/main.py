@@ -1,9 +1,10 @@
 """
 FastAPI backend for SEO Listing Optimizer AI Agent
-Implements rate limiting, timeout handling, and Gemini 2.5 Flash integration
+Multi-provider LLM (Gemini, Gemma) with routing and fallback on 429/5xx/timeout.
 """
 import asyncio
 import json
+import os
 from typing import List
 
 from fastapi import FastAPI, HTTPException, Request
@@ -11,8 +12,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings
 from slowapi.util import get_remote_address
-import google.generativeai as genai
 
+from ai import LLMGateway, GeminiProvider, GemmaProvider
 from utils.rate_limiter import RateLimiter
 
 # Settings
@@ -21,8 +22,12 @@ class Settings(BaseSettings):
     # requests_per_day: int = 500
     requests_per_minute: int = 100
     requests_per_day: int = 3000
-    api_key: str = ""  # Gemini API key from .env (API_KEY=...)
-    request_timeout: int = 10  # seconds
+    # --- LLM: one key/URL per provider ---
+    gemini_api_key: str = ""       # GEMINI_API_KEY (legacy: API_KEY still works if gemini_api_key empty)
+    gemma_base_url: str = ""       # GEMMA_BASE_URL e.g. http://localhost:11434 (Ollama)
+    gemma_model: str = "gemma2:4b" # GEMMA_MODEL for Gemma 3 4B use gemma3:4b when available
+    ai_provider_order: str = "gemini,gemma"  # AI_PROVIDER_ORDER; omit a name to disable
+    request_timeout: int = 40  # seconds
     port: int = 8500  # Server port (8000 often in use; override via PORT in .env)
     
     class Config:
@@ -31,15 +36,38 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-# Initialize Gemini
-if settings.api_key:
-    genai.configure(api_key=settings.api_key)
-
 # Rate Limiter
 rate_limiter = RateLimiter(
     requests_per_minute=settings.requests_per_minute,
     requests_per_day=settings.requests_per_day
 )
+
+
+def _build_llm_gateway() -> LLMGateway:
+    """Build LLM gateway from settings. GEMINI_API_KEY or API_KEY; GEMMA_BASE_URL optional."""
+    gemini_key = settings.gemini_api_key or os.environ.get("API_KEY", "")
+    order = [s.strip().lower() for s in settings.ai_provider_order.split(",") if s.strip()]
+    providers: List = []
+    if "gemini" in order and gemini_key:
+        providers.append(
+            GeminiProvider(api_key=gemini_key, timeout=settings.request_timeout)
+        )
+    if "gemma" in order and settings.gemma_base_url:
+        providers.append(
+            GemmaProvider(
+                base_url=settings.gemma_base_url,
+                model=settings.gemma_model,
+                timeout=min(settings.request_timeout * 2, 60),
+            )
+        )
+    if not providers:
+        raise RuntimeError(
+            "At least one LLM provider required. Set GEMINI_API_KEY or API_KEY, or GEMMA_BASE_URL (e.g. http://localhost:11434)."
+        )
+    return LLMGateway(providers)
+
+
+llm_gateway = _build_llm_gateway()
 
 # FastAPI App
 app = FastAPI(
@@ -73,6 +101,7 @@ class SEOOptimizeResponse(BaseModel):
     keywords: List[str] = Field(..., description="5 high-volume, long-tail keywords")
     optimizedTitle: str = Field(..., description="AI-optimized product title")
     reasoning: str = Field(..., description="Explanation of optimization strategy")
+    metadata: dict | None = Field(default=None, description="e.g. { provider: 'gemini' | 'gemma' }")
 
 # System Prompt for Gemini
 SEO_SYSTEM_PROMPT = """You are an expert Amazon SEO Consultant for a high-end SaaS agency. 
@@ -96,128 +125,53 @@ Example output:
   "reasoning": "Placed primary keyword 'leak-proof' within first 80 chars. Included brand, size, material, and key benefits. Avoided banned words."
 }"""
 
-async def _call_gemini_with_timeout(model, prompt: str) -> str:
+async def optimize_with_llm(title: str, retries: int = 3) -> SEOOptimizeResponse:
     """
-    Internal function to call Gemini API with timeout protection.
-    Returns the response text or raises an exception.
+    Uses LLM gateway (Gemini, Gemma) with fallback. Retries with backoff on 429/timeout.
     """
-    # Create timeout task
-    timeout_task = asyncio.create_task(asyncio.sleep(settings.request_timeout))
-    api_task = asyncio.create_task(
-        asyncio.to_thread(model.generate_content, prompt)
-    )
-    
-    # Wait for either completion or timeout
-    done, pending = await asyncio.wait(
-        [api_task, timeout_task],
-        return_when=asyncio.FIRST_COMPLETED
-    )
-    
-    # Check if timeout occurred before API response
-    if timeout_task in done and api_task not in done:
-        # Cancel the API task
-        api_task.cancel()
-        try:
-            await api_task
-        except asyncio.CancelledError:
-            pass
-        raise TimeoutError(f"Request exceeded {settings.request_timeout} second timeout")
-    
-    # Cancel timeout task if API completed first
-    if timeout_task in pending:
-        timeout_task.cancel()
-        try:
-            await timeout_task
-        except asyncio.CancelledError:
-            pass
-    
-    # Get API response
-    response = await api_task
-    return response.text.strip()
-
-
-async def optimize_with_gemini(title: str, retries: int = 3) -> SEOOptimizeResponse:
-    """
-    Calls Gemini 2.5 Flash to optimize the product title.
-    Implements Self-Healing AI with retry logic and exponential backoff.
-    Handles 429 rate limit errors gracefully.
-    """
-    # gemini-1.5-flash is retired (404); use gemini-2.0-flash (fallback: gemini-2.0-flash-001)
-    model = genai.GenerativeModel("gemini-2.0-flash")
-    
     prompt = f"{SEO_SYSTEM_PROMPT}\n\nInput Title: {title}\n\nProvide your optimization:"
-    
-    last_error = None
-    
+    last_error: BaseException | None = None
+
     for attempt in range(retries):
         try:
-            # Call Gemini with timeout protection
-            response_text = await _call_gemini_with_timeout(model, prompt)
-            
-            # Try to extract JSON from markdown code blocks if present
-            if "```json" in response_text:
-                response_text = response_text.split("```json")[1].split("```")[0].strip()
-            elif "```" in response_text:
-                response_text = response_text.split("```")[1].split("```")[0].strip()
-            
-            # Parse JSON
-            try:
-                data = json.loads(response_text)
-            except json.JSONDecodeError:
-                raise ValueError("Failed to parse JSON response from AI")
-            
-            # Validate and return
+            res = await llm_gateway.generate(prompt)
+            raw = res.text
+            if "```json" in raw:
+                raw = raw.split("```json")[1].split("```")[0].strip()
+            elif "```" in raw:
+                raw = raw.split("```")[1].split("```")[0].strip()
+            data = json.loads(raw)
             if not isinstance(data.get("keywords"), list) or len(data.get("keywords", [])) != 5:
                 raise ValueError("AI did not return exactly 5 keywords")
-            
             if not isinstance(data.get("optimizedTitle"), str):
                 raise ValueError("AI did not return a valid optimized title")
-            
             return SEOOptimizeResponse(
                 keywords=data["keywords"],
                 optimizedTitle=data["optimizedTitle"],
-                reasoning=data.get("reasoning", "Optimized for Amazon search visibility and mobile display.")
+                reasoning=data.get("reasoning", "Optimized for Amazon search visibility and mobile display."),
+                metadata={"provider": res.provider},
             )
-            
         except TimeoutError as e:
             last_error = e
             if attempt < retries - 1:
-                wait_time = 2 ** attempt  # Exponential backoff: 1s, 2s, 4s
-                print(f"AI request timed out. Retrying in {wait_time}s... ({retries - attempt - 1} retries left)")
-                await asyncio.sleep(wait_time)
+                await asyncio.sleep(2 ** attempt)
             else:
                 raise HTTPException(status_code=504, detail=str(e))
-                
         except Exception as e:
             last_error = e
-            error_str = str(e).lower()
-            
-            # Check for rate limit errors (429)
-            if "429" in error_str or "rate limit" in error_str or "quota" in error_str:
+            err = str(e).lower()
+            if "429" in err or "rate limit" in err or "quota" in err:
                 if attempt < retries - 1:
-                    # For rate limits, wait longer (exponential backoff)
-                    wait_time = 2 ** (attempt + 1)  # 2s, 4s, 8s
-                    print(f"Rate limit hit. Retrying in {wait_time}s... ({retries - attempt - 1} retries left)")
-                    await asyncio.sleep(wait_time)
+                    await asyncio.sleep(2 ** (attempt + 1))
                 else:
-                    raise HTTPException(
-                        status_code=429,
-                        detail="The Agent is busy analyzing other listings. Please wait 60 seconds."
-                    )
+                    raise HTTPException(status_code=429, detail="The Agent is busy. Please wait a minute or two.")
             else:
-                # For other errors, retry with exponential backoff
                 if attempt < retries - 1:
-                    wait_time = 2 ** attempt  # 1s, 2s, 4s
-                    print(f"AI request failed: {str(e)}. Retrying in {wait_time}s... ({retries - attempt - 1} retries left)")
-                    await asyncio.sleep(wait_time)
+                    await asyncio.sleep(2 ** attempt)
                 else:
                     raise HTTPException(status_code=500, detail=f"AI service error: {str(e)}")
-    
-    # If we get here, all retries failed
-    raise HTTPException(
-        status_code=500,
-        detail=f"AI service error after {retries} attempts: {str(last_error)}"
-    )
+    raise HTTPException(status_code=500, detail=f"AI error after {retries} attempts: {last_error}")
+
 
 @app.get("/")
 async def root():
@@ -245,12 +199,11 @@ async def optimize_seo(request: SEOOptimizeRequest, http_request: Request):
     if not rate_limiter.check_rate_limit(client_id):
         raise HTTPException(
             status_code=429,
-            detail="The AI service (Gemini) is rate limited. Please wait 2–3 minutes and try again."
+            detail="Too many requests. Please wait a minute and try again."
         )
-    
-    # Optimize with Gemini
+
     try:
-        result = await optimize_with_gemini(request.title)
+        result = await optimize_with_llm(request.title)
         return result
     except HTTPException:
         raise

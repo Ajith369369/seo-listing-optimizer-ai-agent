@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     requests_per_day: int = 500
     api_key: str = ""  # Gemini API key from .env (API_KEY=...)
     request_timeout: int = 10  # seconds
+    port: int = 8500  # Server port (8000 often in use; override via PORT in .env)
     
     class Config:
         env_file = ".env"
@@ -47,11 +48,13 @@ app = FastAPI(
 
 # CORS Middleware - must run early to add headers to preflight (OPTIONS) and all responses
 # allow_origins=["*"] works when allow_credentials=False; for prod use an explicit allowlist
+# CORS: explicit OPTIONS + dev origins so preflight gets Access-Control-Allow-Origin. For prod, extend via env.
+_cors_origins = ["http://localhost:5173", "http://127.0.0.1:5173"]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Permissive for dev; restrict to specific origins in production
+    allow_origins=_cors_origins,
     allow_credentials=False,
-    allow_methods=["*"],
+    allow_methods=["GET", "POST", "OPTIONS", "PUT", "PATCH", "DELETE", "HEAD"],
     allow_headers=["*"],
     expose_headers=["*"],
 )
@@ -254,4 +257,4 @@ async def optimize_seo(request: SEOOptimizeRequest, http_request: Request):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=settings.port)

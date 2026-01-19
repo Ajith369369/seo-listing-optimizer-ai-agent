@@ -6,7 +6,11 @@ import axios, { AxiosError } from 'axios';
 
 // Empty = use Vite proxy in dev (/api -> :8000), no CORS. Set VITE_API_URL for production.
 const API_BASE_URL = import.meta.env.VITE_API_URL || '';
-const REQUEST_TIMEOUT = 10000; // 10 seconds
+
+// Dev: use backend :8000 directly (or VITE_API_URL). Prod: use VITE_API_URL or '' (same-origin).
+// const API_BASE_URL = import.meta.env.VITE_API_URL || (import.meta.env.DEV ? 'http://localhost:8000' : '');
+
+const REQUEST_TIMEOUT = 30000; // 30 seconds
 
 export interface SEOOptimizeRequest {
   title: string;

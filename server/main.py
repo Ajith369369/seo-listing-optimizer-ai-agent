@@ -17,8 +17,10 @@ from utils.rate_limiter import RateLimiter
 
 # Settings
 class Settings(BaseSettings):
-    requests_per_minute: int = 15
-    requests_per_day: int = 500
+    # requests_per_minute: int = 15
+    # requests_per_day: int = 500
+    requests_per_minute: int = 100
+    requests_per_day: int = 3000
     api_key: str = ""  # Gemini API key from .env (API_KEY=...)
     request_timeout: int = 10  # seconds
     port: int = 8500  # Server port (8000 often in use; override via PORT in .env)
@@ -243,7 +245,7 @@ async def optimize_seo(request: SEOOptimizeRequest, http_request: Request):
     if not rate_limiter.check_rate_limit(client_id):
         raise HTTPException(
             status_code=429,
-            detail="The Agent is busy analyzing other listings. Please wait 60 seconds."
+            detail="The AI service (Gemini) is rate limited. Please wait 2–3 minutes and try again."
         )
     
     # Optimize with Gemini
